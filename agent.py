@@ -27,9 +27,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QPixmap, QIcon
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
 
-from database import create_connection, create_tables
+from database import create_connection, create_community_connection, create_tables
 from licensing import validate_key, generate_key
-from gemini_processor import initialize_gemini, analyze_message_with_gemini, classify_message_type, find_matches_in_catalog
+from gemini_processor import initialize_gemini, analyze_message_with_gemini, classify_message_type, find_matches_in_catalog, detect_fraud_report_with_gemini
 
 class Worker(QObject):
     """
@@ -65,7 +65,11 @@ class SalesAgentDashboard(QMainWindow):
         self.setGeometry(100, 100, 1200, 800)
 
         self.conn = create_connection()
-        create_tables(self.conn) # Ensure tables are created on startup
+        create_tables(self.conn)
+        self.community_conn = create_community_connection()
+        if self.community_conn:
+            create_tables(self.community_conn, is_community=True)
+
         self.gemini_model = initialize_gemini() # Initialize the AI model
 
         self.tabs = QTabWidget()
@@ -431,26 +435,34 @@ class SalesAgentDashboard(QMainWindow):
                 QMessageBox.critical(self, "Database Error", f"An error occurred while removing the group: {e}")
 
     def load_fraudulent_numbers(self):
+        if not self.community_conn: return
         try:
-            c = self.conn.cursor()
+            c = self.community_conn.cursor()
             c.execute("SELECT phone_number, reason FROM fraudulent_numbers")
             numbers = c.fetchall()
+            self.fraudulent_numbers_list.clear()
             for number in numbers:
                 self.fraudulent_numbers_list.addItem(f"{number[0]} - {number[1]}")
         except sqlite3.Error as e:
             QMessageBox.critical(self, "Database Error", f"An error occurred: {e}")
 
     def report_fraudulent_number(self):
+        if not self.community_conn:
+            QMessageBox.critical(self, "Database Error", "Community database connection is not available.")
+            return
+            
         phone_number = self.fraud_number_input.text()
         reason = self.fraud_reason_input.toPlainText()
         if phone_number and reason:
             try:
-                c = self.conn.cursor()
-                c.execute("INSERT INTO fraudulent_numbers (phone_number, reason) VALUES (?, ?)", (phone_number, reason))
-                self.conn.commit()
+                c = self.community_conn.cursor()
+                c.execute("INSERT INTO fraudulent_numbers (phone_number, reason, reported_by) VALUES (?, ?, ?)", 
+                          (phone_number, reason, self.user_phone_number))
+                self.community_conn.commit()
                 self.fraudulent_numbers_list.addItem(f"{phone_number} - {reason}")
                 self.fraud_number_input.clear()
                 self.fraud_reason_input.clear()
+                QMessageBox.information(self, "Success", "Fraudulent number reported to the community.")
             except sqlite3.IntegrityError:
                 QMessageBox.warning(self, "Duplicate Number", "This number has already been reported.")
             except sqlite3.Error as e:
@@ -539,6 +551,10 @@ class SalesAgentDashboard(QMainWindow):
                 
                 worker.status_update.emit("Connected to browser")
 
+                # Start the fraud analysis thread
+                fraud_thread = threading.Thread(target=self.analyze_messages_for_fraud, args=(worker,), daemon=True)
+                fraud_thread.start()
+
                 while worker.running:
                     cursor = conn.cursor()
                     cursor.execute("SELECT name FROM groups")
@@ -612,6 +628,63 @@ class SalesAgentDashboard(QMainWindow):
             finally:
                 conn.close()
                 print("Database connection for monitoring thread closed.")
+
+    def analyze_messages_for_fraud(self, worker):
+        """Continuously analyzes new messages for fraud reports."""
+        if not self.community_conn:
+            print("Fraud analysis disabled: No community DB connection.")
+            return
+
+        print("Starting background fraud analysis...")
+        last_checked_id = 0
+        while worker.running:
+            try:
+                # This needs its own connection for thread safety
+                local_conn = create_connection()
+                comm_conn = create_community_connection()
+                if not local_conn or not comm_conn:
+                    time.sleep(60)
+                    continue
+
+                local_cursor = local_conn.cursor()
+                comm_cursor = comm_conn.cursor()
+
+                local_cursor.execute("SELECT id, sender, message_text FROM messages WHERE id > ?", (last_checked_id,))
+                new_messages = local_cursor.fetchall()
+
+                if new_messages:
+                    last_checked_id = new_messages[-1][0] # Update to the last processed ID
+                    
+                    for msg_id, sender, text in new_messages:
+                        if not worker.running: break
+                        
+                        fraud_report = detect_fraud_report_with_gemini(self.gemini_model, text)
+                        if fraud_report:
+                            phone = fraud_report.get("phone_number")
+                            reason = fraud_report.get("reason", "AI Detected")
+                            
+                            print(f"AI detected a potential fraud report by {sender} against {phone}.")
+                            try:
+                                comm_cursor.execute(
+                                    "INSERT OR IGNORE INTO fraudulent_numbers (phone_number, reason, reported_by) VALUES (?, ?, ?)",
+                                    (phone, reason, f"AI ({sender})")
+                                )
+                                comm_conn.commit()
+                                print(f"Successfully saved AI-detected fraud report for {phone} to community DB.")
+                                # Refresh the list in the UI thread
+                                self.load_fraudulent_numbers()
+                            except sqlite3.Error as e:
+                                print(f"Error saving AI-detected fraud report: {e}")
+                
+                local_conn.close()
+                comm_conn.close()
+
+            except Exception as e:
+                print(f"Error in fraud analysis thread: {e}")
+            
+            # Wait for a while before checking for new messages again
+            time.sleep(120) # Check every 2 minutes
+        print("Fraud analysis thread stopped.")
 
     def scrape_and_save_messages(self, page, db_connection):
         print("Scraping active chat...")
@@ -695,13 +768,18 @@ class SalesAgentDashboard(QMainWindow):
             self.customer_replies_table.setRowCount(0)
             cursor = self.conn.cursor()
 
-            # 1. Fetch all fraudulent numbers for quick lookup
-            cursor.execute("SELECT phone_number FROM fraudulent_numbers")
-            fraudulent_numbers_raw = cursor.fetchall()
-            fraudulent_numbers = {row[0] for row in fraudulent_numbers_raw}
-            print(f"DEBUG: Loaded {len(fraudulent_numbers)} fraudulent numbers for checking.")
+            # 1. Fetch all fraudulent numbers from the COMMUNITY database
+            fraudulent_numbers = set()
+            if self.community_conn:
+                try:
+                    comm_c = self.community_conn.cursor()
+                    comm_c.execute("SELECT phone_number FROM fraudulent_numbers")
+                    fraudulent_numbers = {row[0] for row in comm_c.fetchall()}
+                    print(f"DEBUG: Loaded {len(fraudulent_numbers)} fraudulent numbers from the community DB.")
+                except Exception as e:
+                    print(f"ERROR: Could not load community fraud list: {e}")
             
-            # 2. Get the relevant messages
+            # 2. Get the relevant messages from the LOCAL database
             cursor.execute("""
                 SELECT timestamp, sender, message_text 
                 FROM messages 

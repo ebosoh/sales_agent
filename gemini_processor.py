@@ -181,3 +181,54 @@ def find_matches_in_catalog(model, buying_request_text, catalog_items):
         print(f"Error during Gemini matching call or JSON parsing: {e}")
         print(f"Raw response was: {response.text if 'response' in locals() else 'N/A'}")
         return []
+
+def detect_fraud_report_with_gemini(model, message_text):
+    """
+    Analyzes a message to determine if it's a fraud report and extracts details.
+
+    Args:
+        model: The initialized Gemini model.
+        message_text: The raw text of the WhatsApp message.
+
+    Returns:
+        A dictionary with "phone_number" and "reason" if it's a fraud report, otherwise None.
+    """
+    if not model:
+        print("Cannot analyze for fraud: Gemini model is not initialized.")
+        return None
+
+    prompt = f'''
+    You are a security analyst for a sales group. Your task is to determine if a message is reporting a fraudulent number.
+    A fraud report typically contains a phone number and a reason, like "is a conman", "scammer", "don't trust", "stole from me".
+
+    Analyze the following message:
+    ---
+    {message_text}
+    ---
+
+    If this is a fraud report, extract the phone number being reported and the reason.
+    Return the result as a single line of valid JSON with two keys: "phone_number" and "reason".
+    The phone number should be in the format +254XXXXXXXXX.
+
+    If this is NOT a fraud report, return a JSON object with null values: {{"phone_number": null, "reason": null}}
+
+    Examples:
+    Message: "Beware of +254712345678, he is a conman." -> {{"phone_number": "+254712345678", "reason": "He is a conman."}}
+    Message: "That guy 0712345678 is a scammer" -> {{"phone_number": "+254712345678", "reason": "Is a scammer"}}
+    Message: "I have a bumper for sale" -> {{"phone_number": null, "reason": null}}
+    Message: "Thank you for the part" -> {{"phone_number": null, "reason": null}}
+
+    Provide the JSON output for the message above.
+    '''
+    try:
+        response = model.generate_content(prompt)
+        match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        if match:
+            json_string = match.group(0)
+            data = json.loads(json_string)
+            if data.get("phone_number"):
+                return data
+        return None
+    except Exception as e:
+        print(f"Error during fraud detection call or JSON parsing: {e}")
+        return None
