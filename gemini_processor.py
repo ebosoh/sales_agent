@@ -161,7 +161,7 @@ def find_matches_in_catalog(model, buying_request_text, catalog_items):
 
     Your task:
     1. Analyze the customer's request.
-    2. Compare it against every item in the catalog.
+    2. Compare the request against every item in the catalog. A good match should consider the product, make, type, and year. The "other_details" field should also be considered for relevance.
     3. Return a single valid JSON array containing ONLY the full JSON objects of the items from the catalog that are a good match.
     4. If there are no matches, return an empty JSON array `[]`.
 

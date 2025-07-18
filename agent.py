@@ -112,7 +112,7 @@ class SalesAgentDashboard(QMainWindow):
         layout = QVBoxLayout(tab)
 
         self.popular_products_table = QTableWidget()
-        self.popular_products_table.setColumnCount(7) # Reduced from 9
+        self.popular_products_table.setColumnCount(6)
         self.popular_products_table.setHorizontalHeaderLabels(
             [
                 "Product",
@@ -121,7 +121,6 @@ class SalesAgentDashboard(QMainWindow):
                 "Year",
                 "Picture",
                 "Other details",
-                "Date and Time", # Moved to end
             ]
         )
         self.popular_products_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -146,6 +145,10 @@ class SalesAgentDashboard(QMainWindow):
 
         self.monitored_groups_list = QListWidget()
         layout.addWidget(self.monitored_groups_list)
+
+        self.remove_group_button = QPushButton("Remove Selected Group")
+        self.remove_group_button.clicked.connect(self.remove_group)
+        layout.addWidget(self.remove_group_button)
 
         self.start_monitoring_button = QPushButton("Start Monitoring")
         self.start_monitoring_button.clicked.connect(self.start_monitoring)
@@ -289,6 +292,26 @@ class SalesAgentDashboard(QMainWindow):
                 QMessageBox.critical(self, "Database Error", f"An error occurred: {e}")
         else:
             QMessageBox.warning(self, "Input Error", "Please enter a group name.")
+
+    def remove_group(self):
+        selected_item = self.monitored_groups_list.currentItem()
+        if not selected_item:
+            QMessageBox.warning(self, "Selection Error", "Please select a group to remove.")
+            return
+
+        group_name = selected_item.text()
+        confirm = QMessageBox.question(self, "Confirm Deletion", f"Are you sure you want to remove the group '{group_name}'?",
+                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+
+        if confirm == QMessageBox.StandardButton.Yes:
+            try:
+                c = self.conn.cursor()
+                c.execute("DELETE FROM groups WHERE name = ?", (group_name,))
+                self.conn.commit()
+                self.monitored_groups_list.takeItem(self.monitored_groups_list.row(selected_item))
+                QMessageBox.information(self, "Success", f"Group '{group_name}' has been removed.")
+            except sqlite3.Error as e:
+                QMessageBox.critical(self, "Database Error", f"An error occurred while removing the group: {e}")
 
     def load_fraudulent_numbers(self):
         try:
@@ -519,9 +542,6 @@ class SalesAgentDashboard(QMainWindow):
                 
                 processed_data = analyze_message_with_gemini(self.gemini_model, text)
 
-                self.popular_products_table.setItem(i, 0, QTableWidgetItem(timestamp))
-                self.popular_products_table.setItem(i, 1, QTableWidgetItem(sender))
-
                 if processed_data:
                     self.popular_products_table.setItem(i, 0, QTableWidgetItem(str(processed_data.get('product', 'N/A'))))
                     self.popular_products_table.setItem(i, 1, QTableWidgetItem(str(processed_data.get('make', 'N/A'))))
@@ -536,9 +556,15 @@ class SalesAgentDashboard(QMainWindow):
                         self.popular_products_table.setItem(i, 4, QTableWidgetItem(icon, ""))
 
                     self.popular_products_table.setItem(i, 5, QTableWidgetItem(str(processed_data.get('other_details', 'N/A'))))
-                    self.popular_products_table.setItem(i, 6, QTableWidgetItem(timestamp))
                 else:
-                    self.popular_products_table.setItem(i, 5, QTableWidgetItem(f"[AI FAILED] {text}"))
+                    # Optional: You might want to fill the row with placeholder text if AI fails
+                    self.popular_products_table.setItem(i, 0, QTableWidgetItem("[AI FAILED]"))
+                    self.popular_products_table.setItem(i, 1, QTableWidgetItem("N/A"))
+                    self.popular_products_table.setItem(i, 2, QTableWidgetItem("N/A"))
+                    self.popular_products_table.setItem(i, 3, QTableWidgetItem("N/A"))
+                    self.popular_products_table.setItem(i, 4, QTableWidgetItem("N/A"))
+                    self.popular_products_table.setItem(i, 5, QTableWidgetItem(text))
+
 
             print(f"Loaded and processed {len(messages)} messages into Popular Products tab.")
         except Exception as e:
