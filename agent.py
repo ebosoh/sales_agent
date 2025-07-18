@@ -461,14 +461,20 @@ class SalesAgentDashboard(QMainWindow):
                         try:
                             # Navigate to the group
                             worker.status_update.emit(f"Navigating to '{group_name}'")
-                            search_box_selector = 'div[title="Search input textbox"]'
-                            page.wait_for_selector(search_box_selector, timeout=10000)
-                            page.locator(search_box_selector).fill(group_name)
-                            page.press(search_box_selector, 'Enter')
                             
-                            # Click the correct chat
+                            # 1. Wait for the main chat list to be ready
+                            chat_list_selector = 'div[data-testid="chat-list"]'
+                            page.wait_for_selector(chat_list_selector, timeout=30000)
+
+                            # 2. Use a more robust selector for the search box and fill it
+                            search_box_selector = 'div[data-testid="chat-list-search"]'
+                            page.wait_for_selector(search_box_selector, timeout=30000)
+                            page.locator(search_box_selector).fill(group_name)
+                            time.sleep(2) # Wait for search results to populate
+
+                            # 3. Click the correct chat from the results
                             chat_selector = f'span[title="{group_name}"]'
-                            page.wait_for_selector(chat_selector, timeout=5000)
+                            page.wait_for_selector(chat_selector, timeout=10000)
                             page.locator(chat_selector).first.click()
                             
                             worker.status_update.emit(f"Scraping '{group_name}'")
