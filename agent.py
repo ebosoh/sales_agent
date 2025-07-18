@@ -77,7 +77,7 @@ class SalesAgentDashboard(QMainWindow):
         self.gemini_model = initialize_gemini() # Initialize the AI model
 
         self.tabs = QTabWidget()
-        # Apply a similar background to the QTabWidget for consistency
+        # Apply a lighter background to the QTabWidget for contrast
         self.tabs.setStyleSheet("background-color: #E0F2F7;") # Light blue
         self.setCentralWidget(self.tabs)
 
