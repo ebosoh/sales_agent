@@ -542,52 +542,41 @@ class SalesAgentDashboard(QMainWindow):
 
             cursor = db_connection.cursor()
             for msg_element in messages:
-                # The selector for the image needs to be more general to catch image-only messages
-                img_element = msg_element.query_selector('img')
+                # --- New, more specific image scraping logic ---
+                img_element = msg_element.query_selector('img[src^="blob:"]') # Look specifically for blob images
                 text_element = msg_element.query_selector('span.selectable-text')
                 meta_element = msg_element.query_selector('div[data-pre-plain-text]')
                 
-                replied_to_element = msg_element.query_selector('[aria-label="Quoted message"]')
-                is_reply = 1 if replied_to_element else 0
-                replied_to_text = None
-                replied_to_sender = None
-
-                if is_reply:
-                    try:
-                        reply_spans = replied_to_element.query_selector_all('span')
-                        if len(reply_spans) > 1:
-                            replied_to_sender = reply_spans[0].inner_text()
-                            replied_to_text = reply_spans[1].inner_text()
-                    except Exception as e:
-                        print(f"Could not parse a reply element: {e}")
-
                 picture_data = None
                 if img_element:
                     try:
                         src = img_element.get_attribute('src')
-                        if src and src.startswith('blob:'):
-                            script = """
-                                async (src) => {
-                                    const response = await fetch(src);
-                                    const blob = await response.blob();
-                                    const reader = new FileReader();
-                                    return new Promise(resolve => {
-                                        reader.onload = () => resolve(reader.result);
-                                        reader.readAsDataURL(blob);
-                                    });
-                                }
-                            """
-                            data_url = page.evaluate(script, src)
-                            picture_data = base64.b64decode(data_url.split(',')[1])
+                        if src:
+                            picture_data = page.evaluate("async (src) => { const response = await fetch(src); const blob = await response.blob(); return new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result.split(',')[1]); reader.readAsDataURL(blob); }); }", src)
+                            if picture_data:
+                                picture_data = base64.b64decode(picture_data)
                     except Exception as e:
-                        print(f"Could not extract image data: {e}")
+                        print(f"ERROR: Could not extract image data with new method: {e}")
 
-                if text_element and meta_element:
-                    message_text = text_element.inner_text().strip()
+                # --- Logic to save the message ---
+                if meta_element and (text_element or picture_data):
+                    message_text = text_element.inner_text().strip() if text_element else "[Image Post]"
                     meta_text = meta_element.get_attribute('data-pre-plain-text').strip()
-                    
                     timestamp = meta_text.split(']')[0][1:]
                     sender = meta_text.split(']')[1].split(':')[0].strip()
+                    
+                    replied_to_element = msg_element.query_selector('[aria-label="Quoted message"]')
+                    is_reply = 1 if replied_to_element else 0
+                    replied_to_text = None
+                    replied_to_sender = None
+                    if is_reply:
+                        try:
+                            reply_spans = replied_to_element.query_selector_all('span')
+                            if len(reply_spans) > 1:
+                                replied_to_sender = reply_spans[0].inner_text()
+                                replied_to_text = reply_spans[1].inner_text()
+                        except Exception as e:
+                            print(f"Could not parse a reply element: {e}")
 
                     cursor.execute("""
                         INSERT OR IGNORE INTO messages (group_name, sender, message_text, timestamp, picture_blob, is_reply, replied_to_text, replied_to_sender)
@@ -642,9 +631,11 @@ class SalesAgentDashboard(QMainWindow):
                     picture_blob = self.get_picture_for_message(timestamp, sender, text)
                     if picture_blob:
                         pixmap = QPixmap()
-                        pixmap.loadFromData(picture_blob)
-                        icon = QIcon(pixmap)
-                        self.customer_replies_table.setItem(i, 7, QTableWidgetItem(icon, ""))
+                        if pixmap.loadFromData(picture_blob):
+                            icon = QIcon(pixmap)
+                            self.customer_replies_table.setItem(i, 7, QTableWidgetItem(icon, ""))
+                        else:
+                            print("ERROR: QPixmap failed to load from blob data.")
 
                     self.customer_replies_table.setItem(i, 8, QTableWidgetItem(str(processed_data.get('price_ksh', 0))))
                     self.customer_replies_table.setItem(i, 9, QTableWidgetItem(text)) # Show the actual reply text
@@ -696,9 +687,11 @@ class SalesAgentDashboard(QMainWindow):
                     picture_blob = self.get_picture_for_message(timestamp, sender, text)
                     if picture_blob:
                         pixmap = QPixmap()
-                        pixmap.loadFromData(picture_blob)
-                        icon = QIcon(pixmap)
-                        self.popular_products_table.setItem(i, 4, QTableWidgetItem(icon, ""))
+                        if pixmap.loadFromData(picture_blob):
+                            icon = QIcon(pixmap)
+                            self.popular_products_table.setItem(i, 4, QTableWidgetItem(icon, ""))
+                        else:
+                            print("ERROR: QPixmap failed to load from blob data.")
 
                     self.popular_products_table.setItem(i, 5, QTableWidgetItem(str(processed_data.get('other_details', 'N/A'))))
                 else:
