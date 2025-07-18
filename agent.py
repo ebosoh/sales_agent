@@ -64,6 +64,9 @@ class SalesAgentDashboard(QMainWindow):
         )
         self.setGeometry(100, 100, 1200, 800)
 
+        # Apply a light blue background to the main window
+        self.setStyleSheet("background-color: #E0F2F7;") # Light blue
+
         self.conn = create_connection()
         create_tables(self.conn)
         self.community_conn = create_community_connection()
@@ -73,6 +76,8 @@ class SalesAgentDashboard(QMainWindow):
         self.gemini_model = initialize_gemini() # Initialize the AI model
 
         self.tabs = QTabWidget()
+        # Apply a similar background to the QTabWidget for consistency
+        self.tabs.setStyleSheet("background-color: #E0F2F7;") # Light blue
         self.setCentralWidget(self.tabs)
 
         # --- Monitoring State ---
