@@ -65,8 +65,8 @@ class SalesAgentDashboard(QMainWindow):
         self.setGeometry(100, 100, 1200, 800)
 
         # Apply a light blue background to the main window
-        # Apply a bright blue background to the main window and increase font size
-        self.setStyleSheet("QMainWindow { background-color: #007BFF; } * { font-size: 14px; }") # Bright blue and increased font
+        # Apply global font size, darker text, and bold font weight
+        self.setStyleSheet("* { font-size: 14px; color: #333333; font-weight: bold; }") # Increased font, dark text, bold
 
         self.conn = create_connection()
         create_tables(self.conn)
