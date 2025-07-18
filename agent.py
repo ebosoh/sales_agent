@@ -82,13 +82,15 @@ class SalesAgentDashboard(QMainWindow):
         self.create_popular_tab()
         self.create_groups_tab()
         self.create_mulika_mwizi_tab()
-        self.create_catalog_tab() # Add new tab
+        self.create_catalog_tab()
+        self.create_call_log_tab() # Add new tab
 
         self.load_groups()
         self.load_fraudulent_numbers()
         self.load_customer_replies()
         self.load_popular_products()
-        self.load_catalog() # Load data for new tab
+        self.load_catalog()
+        self.load_call_logs() # Load data for new tab
 
     def create_customer_replies_tab(self):
         tab = QWidget()
@@ -245,6 +247,86 @@ class SalesAgentDashboard(QMainWindow):
         self.catalog_table.setHorizontalHeaderLabels(["Product", "Make", "Type", "Year", "Price (KSh)", "Other Details"])
         self.catalog_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.catalog_table)
+
+    def create_call_log_tab(self):
+        tab = QWidget()
+        self.tabs.addTab(tab, "Call Log")
+        layout = QVBoxLayout(tab)
+
+        # Form for adding a new call log
+        self.log_customer_name_input = QLineEdit()
+        self.log_customer_name_input.setPlaceholderText("Customer Name")
+        self.log_phone_number_input = QLineEdit()
+        self.log_phone_number_input.setPlaceholderText("Phone Number")
+        self.log_notes_input = QTextEdit()
+        self.log_notes_input.setPlaceholderText("Call notes and summary...")
+        
+        save_log_button = QPushButton("Save Call Log")
+        save_log_button.clicked.connect(self.add_call_log)
+
+        layout.addWidget(QLabel("Log a New Call:"))
+        layout.addWidget(self.log_customer_name_input)
+        layout.addWidget(self.log_phone_number_input)
+        layout.addWidget(self.log_notes_input)
+        layout.addWidget(save_log_button)
+
+        # Table to display call log history
+        self.call_log_table = QTableWidget()
+        self.call_log_table.setColumnCount(4)
+        self.call_log_table.setHorizontalHeaderLabels(["Date / Time", "Customer Name", "Phone Number", "Notes"])
+        self.call_log_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.call_log_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive) # Allow notes column to be resized
+        layout.addWidget(QLabel("Call History:"))
+        layout.addWidget(self.call_log_table)
+
+    def add_call_log(self):
+        name = self.log_customer_name_input.text()
+        phone = self.log_phone_number_input.text()
+        notes = self.log_notes_input.toPlainText()
+
+        if not name and not phone:
+            QMessageBox.warning(self, "Input Error", "Please enter at least a name or a phone number.")
+            return
+        
+        if not notes:
+            QMessageBox.warning(self, "Input Error", "Please enter some notes for the call.")
+            return
+
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                INSERT INTO call_logs (customer_name, phone_number, notes)
+                VALUES (?, ?, ?)
+            """, (name, phone, notes))
+            self.conn.commit()
+            
+            # Clear inputs and refresh table
+            self.log_customer_name_input.clear()
+            self.log_phone_number_input.clear()
+            self.log_notes_input.clear()
+            self.load_call_logs()
+            print(f"Saved call log for '{name if name else phone}'.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Database Error", f"An error occurred while saving the call log: {e}")
+
+    def load_call_logs(self):
+        print("Loading Call Logs...")
+        try:
+            self.call_log_table.setRowCount(0)
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT timestamp, customer_name, phone_number, notes FROM call_logs ORDER BY timestamp DESC")
+            logs = cursor.fetchall()
+
+            self.call_log_table.setRowCount(len(logs))
+            for i, log in enumerate(logs):
+                self.call_log_table.setItem(i, 0, QTableWidgetItem(log[0]))
+                self.call_log_table.setItem(i, 1, QTableWidgetItem(log[1]))
+                self.call_log_table.setItem(i, 2, QTableWidgetItem(log[2]))
+                self.call_log_table.setItem(i, 3, QTableWidgetItem(log[3]))
+            print(f"Loaded {len(logs)} call logs.")
+        except Exception as e:
+            print(f"Error loading call logs: {e}")
 
     def load_catalog(self):
         print("Loading Seller Catalog...")
@@ -439,9 +521,22 @@ class SalesAgentDashboard(QMainWindow):
 
         with sync_playwright() as p:
             try:
-                browser = p.chromium.connect_over_cdp("http://localhost:9223")
-                context = browser.contexts[0]
-                page = context.pages[0]
+                # New: Launch a persistent browser context instead of connecting.
+                # This automates the browser launch and removes the need for manual commands.
+                user_data_dir = "wa_user_data"
+                context = p.chromium.launch_persistent_context(
+                    user_data_dir,
+                    headless=False, # Set to True if you don't want to see the browser
+                    args=['--remote-debugging-port=9223'] # Keep the port for potential future connections
+                )
+                page = context.pages[0] if context.pages else context.new_page()
+                
+                # Navigate to WhatsApp Web if not already there
+                if "web.whatsapp.com" not in page.url:
+                    worker.status_update.emit("Navigating to WhatsApp Web...")
+                    page.goto("https://web.whatsapp.com/", wait_until="domcontentloaded")
+                    worker.status_update.emit("Please log in to WhatsApp Web if needed.")
+                
                 worker.status_update.emit("Connected to browser")
 
                 while worker.running:

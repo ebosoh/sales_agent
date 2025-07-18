@@ -53,6 +53,15 @@ def create_tables(conn):
                 other_details TEXT
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS call_logs (
+                id INTEGER PRIMARY KEY,
+                customer_name TEXT,
+                phone_number TEXT,
+                notes TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
         print("Tables created successfully.")
     except sqlite3.Error as e:
