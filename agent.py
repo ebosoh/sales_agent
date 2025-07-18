@@ -542,10 +542,10 @@ class SalesAgentDashboard(QMainWindow):
 
             cursor = db_connection.cursor()
             for msg_element in messages:
-                # Use more specific selectors within the message row
+                # The selector for the image needs to be more general to catch image-only messages
+                img_element = msg_element.query_selector('img')
                 text_element = msg_element.query_selector('span.selectable-text')
                 meta_element = msg_element.query_selector('div[data-pre-plain-text]')
-                img_element = msg_element.query_selector('img')
                 
                 replied_to_element = msg_element.query_selector('[aria-label="Quoted message"]')
                 is_reply = 1 if replied_to_element else 0
