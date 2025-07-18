@@ -39,10 +39,9 @@ class Worker(QObject):
     status_update = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, monitor_function, db_connection_string):
+    def __init__(self, monitor_function):
         super().__init__()
         self.monitor_function = monitor_function
-        self.db_connection_string = db_connection_string
         self.running = True
 
     def run(self):
@@ -394,7 +393,7 @@ class SalesAgentDashboard(QMainWindow):
         self.monitoring_status_label.setStyleSheet("color: orange;")
 
         self.monitoring_thread = QThread()
-        self.monitoring_worker = Worker(self.monitor_groups, "sales_agent.db")
+        self.monitoring_worker = Worker(self.monitor_groups)
         self.monitoring_worker.moveToThread(self.monitoring_thread)
 
         self.monitoring_thread.started.connect(self.monitoring_worker.run)
@@ -433,7 +432,7 @@ class SalesAgentDashboard(QMainWindow):
         self.monitoring_status_label.setStyleSheet("color: green;")
 
     def monitor_groups(self, worker):
-        conn = create_connection(worker.db_connection_string)
+        conn = create_connection()
         if not conn:
             worker.error.emit("Could not create a database connection in the monitoring thread.")
             return
