@@ -459,28 +459,32 @@ class SalesAgentDashboard(QMainWindow):
                             break
                         
                         try:
-                            # Navigate to the group
-                            worker.status_update.emit(f"Navigating to '{group_name}'")
+                            # This is a new, more robust navigation logic that mimics human scrolling.
+                            worker.status_update.emit(f"Searching for '{group_name}'")
+                            page.wait_for_selector('div[data-testid="chat-list"]', timeout=30000)
                             
-                            # 1. Wait for the main chat panel to be ready.
-                            side_panel_selector = 'div[data-testid="chat-list"]'
-                            page.wait_for_selector(side_panel_selector, timeout=30000)
-                            
-                            # 2. Use a more robust selector to find and click the search box.
-                            search_box_selector = 'div[role="textbox"][aria-label="Search or start new chat"]'
-                            page.wait_for_selector(search_box_selector, timeout=30000)
-                            page.click(search_box_selector)
-                            time.sleep(1)
+                            group_found = False
+                            # Try to find the group by its title attribute in a span
+                            chat_selector = f'//span[@title="{group_name}"]'
 
-                            # 3. Fill the search box and wait for results.
-                            page.fill(search_box_selector, group_name)
-                            time.sleep(2) 
+                            # Scroll and search loop
+                            for i in range(10): # Try up to 10 scrolls
+                                if not worker.running: break
+                                
+                                group_elements = page.locator(chat_selector).all()
+                                if group_elements:
+                                    # Click the first element found
+                                    group_elements[0].click()
+                                    group_found = True
+                                    break
+                                
+                                # If not found, scroll the chat list down
+                                page.mouse.wheel(0, 500) # Scroll down
+                                time.sleep(1)
 
-                            # 4. Click the correct chat from the results.
-                            chat_selector = f'span[title="{group_name}"]'
-                            page.wait_for_selector(chat_selector, timeout=10000)
-                            page.locator(chat_selector).first.click()
-                            
+                            if not group_found:
+                                raise Exception(f"Group '{group_name}' not found in chat list after 10 scrolls.")
+
                             worker.status_update.emit(f"Scraping '{group_name}'")
                             time.sleep(5) # Wait for messages to load
                             self.scrape_and_save_messages(page, conn)
