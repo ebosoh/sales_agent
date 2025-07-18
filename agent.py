@@ -490,8 +490,17 @@ class SalesAgentDashboard(QMainWindow):
                             self.scrape_and_save_messages(page, conn)
 
                         except Exception as nav_exc:
-                            print(f"Could not navigate to or scrape group {group_name}: {nav_exc}")
-                            worker.status_update.emit(f"Failed to load '{group_name}'")
+                            screenshot_path = "debug_screenshot.png"
+                            page.screenshot(path=screenshot_path)
+                            error_message = (
+                                f"Could not navigate to or scrape group {group_name}. "
+                                f"A screenshot has been saved to '{screenshot_path}' for debugging. "
+                                f"Please view the screenshot and describe what you see. "
+                                f"Original error: {nav_exc}"
+                            )
+                            print(error_message) # Also print to console for clarity
+                            worker.status_update.emit(f"Failed to load '{group_name}'. See console for details.")
+                            # We no longer raise a fatal error, just log and continue to the next group.
                         
                         if not worker.running:
                             break
