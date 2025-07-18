@@ -25,10 +25,36 @@ from PyQt6.QtWidgets import (
     QInputDialog,
 )
 from PyQt6.QtGui import QColor, QPixmap, QIcon
+from PyQt6.QtCore import QObject, pyqtSignal, QThread
 
 from database import create_connection, create_tables
 from licensing import validate_key, generate_key
 from gemini_processor import initialize_gemini, analyze_message_with_gemini, classify_message_type, find_matches_in_catalog
+
+class Worker(QObject):
+    """
+    A worker thread for performing background tasks.
+    """
+    finished = pyqtSignal()
+    status_update = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, monitor_function, db_connection_string):
+        super().__init__()
+        self.monitor_function = monitor_function
+        self.db_connection_string = db_connection_string
+        self.running = True
+
+    def run(self):
+        try:
+            self.monitor_function(self)
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            self.finished.emit()
+
+    def stop(self):
+        self.running = False
 
 class SalesAgentDashboard(QMainWindow):
     def __init__(self, user_phone_number):
@@ -45,6 +71,12 @@ class SalesAgentDashboard(QMainWindow):
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
+
+        # --- Monitoring State ---
+        self.monitoring_thread = None
+        self.monitoring_worker = None
+        self.is_monitoring = False
+        self.animation_state = 0
 
         self.create_customer_replies_tab()
         self.create_match_tab()
@@ -150,9 +182,13 @@ class SalesAgentDashboard(QMainWindow):
         self.remove_group_button.clicked.connect(self.remove_group)
         layout.addWidget(self.remove_group_button)
 
-        self.start_monitoring_button = QPushButton("Start Monitoring")
-        self.start_monitoring_button.clicked.connect(self.start_monitoring)
-        layout.addWidget(self.start_monitoring_button)
+        self.monitoring_toggle_button = QPushButton("Start Monitoring")
+        self.monitoring_toggle_button.clicked.connect(self.toggle_monitoring)
+        layout.addWidget(self.monitoring_toggle_button)
+
+        self.monitoring_status_label = QLabel("Status: Inactive")
+        self.monitoring_status_label.setStyleSheet("color: grey;")
+        layout.addWidget(self.monitoring_status_label)
 
     def create_mulika_mwizi_tab(self):
         tab = QWidget()
@@ -341,17 +377,65 @@ class SalesAgentDashboard(QMainWindow):
         else:
             QMessageBox.warning(self, "Input Error", "Please enter both a phone number and a reason.")
 
-    def start_monitoring(self):
-        # We no longer launch a new browser, we connect to the one the user launched.
-        self.monitoring_thread = threading.Thread(target=self.monitor_whatsapp_and_save, daemon=True)
-        self.monitoring_thread.start()
-        QMessageBox.information(self, "Monitoring Started", "Attempting to connect to your browser and start monitoring.")
+    def toggle_monitoring(self):
+        if self.is_monitoring:
+            self.stop_monitoring()
+        else:
+            self.start_monitoring()
 
-    def monitor_whatsapp_and_save(self):
-        # Each thread needs its own database connection.
-        conn = create_connection()
+    def start_monitoring(self):
+        if self.monitored_groups_list.count() == 0:
+            QMessageBox.warning(self, "No Groups", "Please add at least one group to monitor.")
+            return
+
+        self.is_monitoring = True
+        self.monitoring_toggle_button.setText("Stop Monitoring")
+        self.monitoring_status_label.setText("Status: Starting...")
+        self.monitoring_status_label.setStyleSheet("color: orange;")
+
+        self.monitoring_thread = QThread()
+        self.monitoring_worker = Worker(self.monitor_groups, "sales_agent.db")
+        self.monitoring_worker.moveToThread(self.monitoring_thread)
+
+        self.monitoring_thread.started.connect(self.monitoring_worker.run)
+        self.monitoring_worker.finished.connect(self.on_monitoring_finished)
+        self.monitoring_worker.status_update.connect(self.update_monitoring_status)
+        self.monitoring_worker.error.connect(self.on_monitoring_error)
+
+        self.monitoring_thread.start()
+
+    def stop_monitoring(self):
+        if self.monitoring_worker:
+            self.monitoring_worker.stop()
+        self.monitoring_toggle_button.setEnabled(False)
+        self.monitoring_status_label.setText("Status: Stopping...")
+
+    def on_monitoring_finished(self):
+        self.is_monitoring = False
+        self.monitoring_thread.quit()
+        self.monitoring_thread.wait()
+        self.monitoring_thread = None
+        self.monitoring_worker = None
+        
+        self.monitoring_toggle_button.setText("Start Monitoring")
+        self.monitoring_toggle_button.setEnabled(True)
+        self.monitoring_status_label.setText("Status: Inactive")
+        self.monitoring_status_label.setStyleSheet("color: grey;")
+
+    def on_monitoring_error(self, error_message):
+        QMessageBox.critical(self, "Monitoring Error", f"An error occurred in the monitoring thread:\n{error_message}")
+        self.stop_monitoring()
+
+    def update_monitoring_status(self, status):
+        dots = "." * (self.animation_state + 1)
+        self.animation_state = (self.animation_state + 1) % 3
+        self.monitoring_status_label.setText(f"Status: {status}{dots}")
+        self.monitoring_status_label.setStyleSheet("color: green;")
+
+    def monitor_groups(self, worker):
+        conn = create_connection(worker.db_connection_string)
         if not conn:
-            print("Error: Could not create a database connection in the monitoring thread.")
+            worker.error.emit("Could not create a database connection in the monitoring thread.")
             return
 
         with sync_playwright() as p:
@@ -359,19 +443,55 @@ class SalesAgentDashboard(QMainWindow):
                 browser = p.chromium.connect_over_cdp("http://localhost:9223")
                 context = browser.contexts[0]
                 page = context.pages[0]
-                print("Successfully connected to browser for monitoring.")
+                worker.status_update.emit("Connected to browser")
 
-                # Loop indefinitely to keep scraping
-                while True:
-                    self.scrape_and_save_messages(page, conn)
-                    # Wait for a bit before scraping again to avoid being too aggressive
-                    time.sleep(10) 
+                while worker.running:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT name FROM groups")
+                    groups = [row[0] for row in cursor.fetchall()]
+                    
+                    if not groups:
+                        worker.status_update.emit("No groups to monitor. Waiting...")
+                        time.sleep(30)
+                        continue
+
+                    for group_name in groups:
+                        if not worker.running:
+                            break
+                        
+                        try:
+                            # Navigate to the group
+                            worker.status_update.emit(f"Navigating to '{group_name}'")
+                            search_box_selector = 'div[title="Search input textbox"]'
+                            page.wait_for_selector(search_box_selector, timeout=10000)
+                            page.locator(search_box_selector).fill(group_name)
+                            page.press(search_box_selector, 'Enter')
+                            
+                            # Click the correct chat
+                            chat_selector = f'span[title="{group_name}"]'
+                            page.wait_for_selector(chat_selector, timeout=5000)
+                            page.locator(chat_selector).first.click()
+                            
+                            worker.status_update.emit(f"Scraping '{group_name}'")
+                            time.sleep(5) # Wait for messages to load
+                            self.scrape_and_save_messages(page, conn)
+
+                        except Exception as nav_exc:
+                            print(f"Could not navigate to or scrape group {group_name}: {nav_exc}")
+                            worker.status_update.emit(f"Failed to load '{group_name}'")
+                        
+                        if not worker.running:
+                            break
+                        time.sleep(10) # Wait between groups
+
+                    if worker.running:
+                        worker.status_update.emit("Cycle complete. Waiting...")
+                        time.sleep(60) # Wait a minute before the next full cycle
 
             except Exception as e:
-                print(f"Error connecting to browser or during monitoring: {e}")
-                print("Monitoring stopped. Please ensure the browser is running with the debug port and restart monitoring.")
+                print(f"An error occurred during monitoring: {e}")
+                worker.error.emit(str(e))
             finally:
-                # Ensure the connection for this thread is closed
                 conn.close()
                 print("Database connection for monitoring thread closed.")
 
@@ -625,6 +745,11 @@ class SalesAgentDashboard(QMainWindow):
 
 
     def closeEvent(self, event):
+        if self.is_monitoring:
+            self.stop_monitoring()
+            # Give the thread a moment to stop
+            if self.monitoring_thread and self.monitoring_thread.isRunning():
+                self.monitoring_thread.wait(1000) # Wait up to 1 second
         if self.conn:
             self.conn.close()
         event.accept()
