@@ -708,23 +708,14 @@ class SalesAgentDashboard(QMainWindow):
             group_name = page.locator(group_header_selector).inner_text()
             print(f"Scraping messages from group: {group_name}")
 
-            cursor = db_connection.cursor()
-            for msg_element in messages:
-                # --- New, more specific image scraping logic ---
-                img_element = msg_element.query_selector('img[src^="blob:"]') # Look specifically for blob images
-                text_element = msg_element.query_selector('span.selectable-text')
-                meta_element = msg_element.query_selector('div[data-pre-plain-text]')
-                
-                picture_data = None
-                if img_element:
-                    try:
-                        src = img_element.get_attribute('src')
-                        if src:
-                            picture_data = page.evaluate("async (src) => { const response = await fetch(src); const blob = await response.blob(); return new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result.split(',')[1]); reader.readAsDataURL(blob); }); }", src)
-                            if picture_data:
-                                picture_data = base64.b64decode(picture_data)
-                    except Exception as e:
-                        print(f"ERROR: Could not extract image data with new method: {e}")
+            picture_data = None
+            if img_element:
+                try:
+                    # New Method: Take a direct screenshot of the image element
+                    picture_data = img_element.screenshot()
+                    print(f"DEBUG: Successfully captured image via screenshot. Size: {len(picture_data)} bytes.")
+                except Exception as e:
+                    print(f"ERROR: Could not capture image with screenshot method: {e}")
 
                 # --- Logic to save the message ---
                 if meta_element and (text_element or picture_data):
