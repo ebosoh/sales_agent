@@ -461,7 +461,8 @@ class SalesAgentDashboard(QMainWindow):
                         try:
                             # This is a new, more robust navigation logic that mimics human scrolling.
                             worker.status_update.emit(f"Searching for '{group_name}'")
-                            page.wait_for_selector('div[data-testid="chat-list"]', timeout=30000)
+                            # Wait for the main app panel using the selector you provided.
+                            page.wait_for_selector('#app > div > div.x78zum5.xdt5ytf.x5yr21d > div > div.x9f619.x1n2onr6.xyw6214.x5yr21d.x6ikm8r.x10wlt62.x17dzmu4.x1i1dayz.x2ipvbc.x1w8yi2h.xyyilfv.x1iyjqo2.xpilrb4.x1t7ytsu.x1m2ixmg', timeout=30000)
                             
                             group_found = False
                             # Try to find the group by its title attribute in a span
