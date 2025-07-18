@@ -520,15 +520,18 @@ class SalesAgentDashboard(QMainWindow):
     def scrape_and_save_messages(self, page, db_connection):
         print("Scraping active chat...")
         try:
-            chat_panel_selector = '#app > div > div.x78zum5.xdt5ytf.x5yr21d > div > div.x9f619.x1n2onr6.xyw6214.x5yr21d.x6ikm8r.x10wlt62.x17dzmu4.x1i1dayz.x2ipvbc.x1w8yi2h.xyyilfv.x1iyjqo2.xpilrb4.x1t7ytsu.x1m2ixmg'
-            page.wait_for_selector(chat_panel_selector, timeout=5000)
+            # 1. Wait for the main conversation panel to be ready
+            conversation_panel_selector = 'div[data-testid^="conversation-panel-messages"]'
+            page.wait_for_selector(conversation_panel_selector, timeout=10000)
 
-            message_selector = '#main > div.x1n2onr6.x1vjfegm.x1cqoux5.x14yy4lh > div > div.x10l6tqk.x13vifvy.x1o0tod.xyw6214.x9f619.x78zum5.xdt5ytf.xh8yej3.x5yr21d.x6ikm8r.x1rife3k.xjbqb8w.x1ewm37j > div.x3psx0u.xwib8y2.x1c1uobl.xrmvbpv.xh8yej3.xquzyny.xvc5jky.x11t971q > div'
+            # 2. Use a more robust selector to get all message rows
+            message_selector = f'{conversation_panel_selector} > div[role="row"]'
             page.wait_for_selector(message_selector, timeout=5000)
             
             messages = page.query_selector_all(message_selector)
             
             if not messages:
+                print("No messages found in the current view.")
                 return
 
             # Get the active group name from the header
@@ -538,11 +541,11 @@ class SalesAgentDashboard(QMainWindow):
 
             cursor = db_connection.cursor()
             for msg_element in messages:
+                # Use more specific selectors within the message row
                 text_element = msg_element.query_selector('span.selectable-text')
                 meta_element = msg_element.query_selector('div[data-pre-plain-text]')
                 img_element = msg_element.query_selector('img')
                 
-                # New logic to detect replies
                 replied_to_element = msg_element.query_selector('[aria-label="Quoted message"]')
                 is_reply = 1 if replied_to_element else 0
                 replied_to_text = None
@@ -550,7 +553,6 @@ class SalesAgentDashboard(QMainWindow):
 
                 if is_reply:
                     try:
-                        # The sender is the first span, the text is the second
                         reply_spans = replied_to_element.query_selector_all('span')
                         if len(reply_spans) > 1:
                             replied_to_sender = reply_spans[0].inner_text()
