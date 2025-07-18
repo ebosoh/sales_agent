@@ -520,12 +520,12 @@ class SalesAgentDashboard(QMainWindow):
     def scrape_and_save_messages(self, page, db_connection):
         print("Scraping active chat...")
         try:
-            # 1. Wait for the main conversation panel to be ready
-            conversation_panel_selector = 'div[data-testid^="conversation-panel-messages"]'
+            # 1. Wait for the main conversation panel, using the selector you provided.
+            conversation_panel_selector = '#main > div.x1n2onr6.x1vjfegm.x1cqoux5.x14yy4lh'
             page.wait_for_selector(conversation_panel_selector, timeout=10000)
 
-            # 2. Use a more robust selector to get all message rows
-            message_selector = f'{conversation_panel_selector} > div[role="row"]'
+            # 2. Find all message rows within that specific panel.
+            message_selector = f'{conversation_panel_selector} div[role="row"]'
             page.wait_for_selector(message_selector, timeout=5000)
             
             messages = page.query_selector_all(message_selector)
