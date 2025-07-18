@@ -694,8 +694,14 @@ class SalesAgentDashboard(QMainWindow):
         try:
             self.customer_replies_table.setRowCount(0)
             cursor = self.conn.cursor()
+
+            # 1. Fetch all fraudulent numbers for quick lookup
+            cursor.execute("SELECT phone_number FROM fraudulent_numbers")
+            fraudulent_numbers_raw = cursor.fetchall()
+            fraudulent_numbers = {row[0] for row in fraudulent_numbers_raw}
+            print(f"DEBUG: Loaded {len(fraudulent_numbers)} fraudulent numbers for checking.")
             
-            # The query now uses the stored number, with LIKE to be flexible
+            # 2. Get the relevant messages
             cursor.execute("""
                 SELECT timestamp, sender, message_text 
                 FROM messages 
@@ -711,7 +717,14 @@ class SalesAgentDashboard(QMainWindow):
                 processed_data = analyze_message_with_gemini(self.gemini_model, text)
                 
                 self.customer_replies_table.setItem(i, 0, QTableWidgetItem(timestamp))
-                self.customer_replies_table.setItem(i, 1, QTableWidgetItem(sender))
+                
+                # Create the phone number item
+                phone_item = QTableWidgetItem(sender)
+                # 3. Check if the sender is fraudulent and highlight if so
+                if sender in fraudulent_numbers:
+                    phone_item.setBackground(QColor("red"))
+                    phone_item.setForeground(QColor("white"))
+                self.customer_replies_table.setItem(i, 1, phone_item)
                 
                 risk_item = QTableWidgetItem("Unknown")
                 risk_item.setBackground(QColor("yellow"))
